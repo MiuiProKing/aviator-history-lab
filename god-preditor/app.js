@@ -1,3 +1,4 @@
+import {coversWindow} from '../coverage.js';
 'use strict';
 const Date=window.AviatorClock.Date;
 const API=window.BOG_CLOUD.url+'/rest/v1/aviator_classic_history';
@@ -35,7 +36,7 @@ function normalizeFeed(input){
 function fresh(now=Date.now()){if(collectorStatus)return !!collectorStatus.fresh&&now-lastPollAt<=COVERAGE_MS;const head=rounds[0];if(!head)return false;const t=head._observedAt||(!head.timeIssue?head.timestamp:0);return t>0&&now-t<=FRESH_MS&&t<=now+30000}
 function preciseModel(){return fresh()&&rounds.length>=20&&rounds.slice(0,20).every(r=>!r.estimated)}
 function exactRounds(){return rounds.filter(r=>!r.estimated)}
-function finiteSignal(s){return s&&Number.isFinite(s.target)&&s.target>=1&&Number.isFinite(s.score)&&s.score>=0&&s.score<=100&&Number.isFinite(s.at)&&s.at>0&&Number.isFinite(s.window)&&s.window>0&&s.window<=1800000&&Number.isFinite(s.generatedAt)}
+function finiteSignal(s){return s&&Number.isFinite(s.target)&&s.target>=1&&Number.isFinite(s.score)&&s.score>=0&&s.score<=100&&Number.isFinite(s.at)&&s.at>0&&Number.isFinite(s.window)&&s.window>0&&s.window<=(s.timing?604800000:1800000)&&Number.isFinite(s.generatedAt)}
 function patternName(s){const names={"Cycle des cotes d'or détecté":'Цикл коэффициентов от 10×','Série basse — rebond statistique':'15 раундов ниже 2×','Plage horaire favorable':'Часовая группа выше среднего','Plage horaire faible':'Часовая группа ниже среднего','Analyse multi-signaux':'Мультисигнальный анализ'};return names[s]||s}
 function fromGod(p,big=false){if(!p)return null;const s={target:p.estimatedCoef,score:big?p.confidence:p.reliability,at:big?p.expectedAt:p.estimatedAt,window:p.windowMs,pattern:big?'Крупная цель':patternName(p.pattern),basis:big?p.reason:p.basis,estimated:false,generatedAt:p.generatedAt||Date.now(),rules:big?[p.reason]:[],engine:ENGINE.version};return finiteSignal(s)?s:null}
 function clamp(x,a,b){return Math.max(a,Math.min(b,x))}function mean(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:0}function median(a){if(!a.length)return 0;const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2}function geo(a){if(!a.length)return 0;return Math.exp(mean(a.map(x=>Math.log(Math.max(x,1.001)))))}function deviation(a){const m=mean(a);return Math.sqrt(mean(a.map(x=>(x-m)**2)))}function mad(a){const m=median(a);return median(a.map(x=>Math.abs(x-m)))}function ema(a,alpha){if(!a.length)return 0;let x=a[a.length-1];for(let i=a.length-2;i>=0;i--)x=alpha*a[i]+(1-alpha)*x;return x}function round(x){return Math.floor(x+.5)}function label(score){return score>=82?'Высокая':score>=66?'Средняя':'Слабая'}
@@ -57,55 +58,13 @@ function ordinaryPrediction(forceOrder=false){const data=rounds.filter(r=>coeffi
  const composite=ema20*.5+ema50*.3+avg50*.2;target=clamp(composite*hourFactor*.6+(!estimated&&minuteRows.length?Math.max(...minuteRows.map(coefficient))*.1:0)+1.6,1.8,12);const dangerous=lowRatio>.6||sigma50>avg50*1.6;if(dangerous)target=Math.min(target,3.2);else if(lowRatio>.45)target=Math.min(target,5);score=round(clamp(52+clamp(n/25,0,28)+clamp(Math.abs(hourFactor-1)*42,0,22)+clamp(Math.abs(minuteFactor-1)*32,0,16)+(mad50>0&&mad50<avg50*.6?5:0)+(dangerous?-8:0),50,92));const sec=new Date().getSeconds(),extra=((60-sec)*1000)%45000;at=now+120000+extra;window=150000;pattern=dangerous?'Повышенная нестабильность':'Мультисигнальный анализ';basis=`EMA20 ${ema20.toFixed(2)}× · EMA50 ${ema50.toFixed(2)}× · MAD ${mad50.toFixed(2)} · час ${clock.getHours()}: гео ${hourGeo.toFixed(2)}× (${hourRows.length}) · ${n} раундов${estimated?' · время раундов оценочное':''}`;return{target,score,at,window,pattern,basis,estimated}}
 
 function vipPrediction(){
-
- const data=rounds.filter(r=>coefficient(r)!==null).slice(0,MODEL_LIMIT),now=Date.now();
-
- if(!data.length)return null;
-
- const recent=data.slice(0,80),values=recent.map(coefficient),n=values.length;
-
- const n10=values.filter(x=>x>=10).length,n20=values.filter(x=>x>=20).length,n50=values.filter(x=>x>=50).length,n100=values.filter(x=>x>=100).length;
-
- let target=10;
-
- if(n20>=3)target=20;
-
- if(n50>=2&&n20>=5)target=50;
-
- if(n100>=2&&n50>=3&&n20>=5)target=100;
-
- const hits=values.filter(x=>x>=target).length,hitRate=Math.round(hits*100/Math.max(n,1));
-
- const estimated=data.some(r=>r.estimated);
-
- let at=now+120000,window=180000,timeBasis='Вход назначен на ближайшее окно VIP-анализа';
-
- if(!estimated){
-
-  const g=gapStats(data,target);
-
-  if(g.count>=4&&g.med>=60000&&g.med<=1200000&&g.mad<g.med*.8){
-
-   const expected=g.last+g.med,delta=expected-now;
-
-   if(delta>=60000&&delta<=1200000){
-
-    at=expected;
-
-    window=clamp(g.mad?g.mad*1.4826:g.med*.35,120000,360000);
-
-    timeBasis='Время оценено по медианному интервалу крупных результатов';
-
-   }
-
-  }
-
- }
-
- const score=round(clamp(55+Math.min(20,hits*3)+(n>=80?5:0),55,80));
-
- return{target,score,hitRate,hits,sampleSize:n,at,window,pattern:'Автоматический VIP-анализ крупного коэффициента',basis:'За последние '+n+' раундов: ≥10× - '+n10+', ≥20× - '+n20+', ≥50× - '+n50+'. '+timeBasis+'.',estimated};
-
+ const report=window.ClassicCloud.report(),now=Date.now();
+ if(!timingReportReady(report,now))return null;
+ const recent=rounds.slice(0,80),n20=recent.filter(r=>r.coefficient>=20).length,n50=recent.filter(r=>r.coefficient>=50).length;
+ let target=n50>=2&&n20>=5?50:n20>=3?20:10;
+ const m=report.large?.find(x=>x.target===target),w=registeredTiming(report,m,now);
+ if(!w||w.end<=now)return null;
+ return {target,score:0,at:w.start,window:w.end-w.start,generatedAt:w.center,pattern:'Крупная цель · проверка времени',basis:m.reason,estimated:false,timing:m.validation,timingWindowId:w.id};
 }
 
 
@@ -115,21 +74,20 @@ function ordinaryAnalysis(){
  const s=ordinaryPrediction(true);return s?{...s,target:Number(s.target.toFixed(2)),generatedAt:Date.now(),estimated:true,engine:'order-only-audit3',basis:'Анализ последовательности; временные циклы и часовые группы отключены. '+s.basis}:null;
 }
 function bigOpportunity(now=Date.now()){
- if(!online||!fresh(now)||rounds.length<20)return null;
- if(preciseModel())return fromGod(ENGINE.detectBigOpportunity(exactRounds(),now),true);
- // A cluster uses coefficients and order; it does not require exact event times.
- const recent=rounds.slice(0,80),c20=recent.filter(r=>r.coefficient>=20).length,c50=recent.filter(r=>r.coefficient>=50).length;
- if(c20<6||c50<3)return null;
- const score=Math.round(clamp(55+c50*5+c20,55,82));if(score<75)return null;
- return {target:120,score,at:now+180000,window:360000,generatedAt:now,estimated:true,pattern:'Кластер крупных результатов',rules:['Кластер по порядку раундов'],basis:c20+' результатов ≥20× и '+c50+' результатов ≥50× за '+recent.length+' раундов. Окно ориентировочное, точное время игры неизвестно.',engine:'order-only-audit3'};
+ const report=window.ClassicCloud.report();
+ if(!online||!fresh(now)||!timingReportReady(report,now))return null;
+ const m=report.large?.filter(m=>m.target>=100&&registeredTiming(report,m,now)).sort((a,b)=>a.target-b.target)[0];
+ if(!m)return null;const w=registeredTiming(report,m,now);
+ return {target:m.target,score:0,at:w.start,window:w.end-w.start,generatedAt:w.center,estimated:false,pattern:'Крупная цель · историческое время',basis:m.reason,rules:[],timing:m.validation,timingWindowId:w.id};
 }
+
 function lockedPrediction(kind){
  const report=window.ClassicCloud.report();
  if(kind==='normal'&&fresh()&&report?.fresh&&report.prediction&&Date.now()-globalThis.Date.parse(report.checked_at)<90000){activeNormal=fromGod(report.prediction);recordSignal(kind,activeNormal);return activeNormal}
- const now=Date.now(),current=kind==='normal'?activeNormal:activeVip;
+ const now=Date.now();let current=kind==='normal'?activeNormal:activeVip;if(current?.timing&&!report?.windows?.some(w=>w.id===current.timingWindowId&&w.status==='pending')){current=null;if(kind==='vip')activeVip=null}
  if(current&&now<Math.max(current.at+current.window,current.generatedAt+60000))return current;
  const next=kind==='normal'?ordinaryAnalysis():online&&fresh()&&rounds.length>=20?vipPrediction():null;
- if(next){next.generatedAt=now;next.estimated=!preciseModel()||next.estimated}
+ if(next){next.generatedAt=now;next.estimated=next.timing?false:!preciseModel()||next.estimated}
  if(kind==='normal')activeNormal=next;else activeVip=next;
  recordSignal(kind,next);return next;
 }
@@ -137,10 +95,11 @@ function chooseMode(next){mode=next;const vip=next==='vip';$('normalTab').classL
 function durationLabel(ms){const s=Math.max(0,Math.ceil(ms/1000));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
 function emptyReason(){if(collectorStatus&&!collectorStatus.fresh)return collectorStatus.source_connected?'Собираются новые раунды: '+collectorStatus.session_rounds+'/'+collectorStatus.warmup_required+'. История доступна.':'Наш сборщик ожидает подключения к игре.';if(!online)return 'Ожидаю успешного обновления базы.';if(!rounds.length)return 'В базе пока нет подходящих раундов.';if(!fresh())return 'Последний раунд устарел. Новый прогноз появится после обновления источника.';return 'Для расчёта нужны 20 раундов: получено '+rounds.length+'.'}
 function signalMarkup(s,vip){
- if(!s)return '<div class="signal-empty">'+escapeText(emptyReason())+'</div>';
+ if(!s)return '<div class="signal-empty">'+escapeText(vip?'Для времени крупных целей нужны 20 полных интервалов и 8 последующих проверок. Состояние каждой цели показано ниже.':emptyReason())+'</div>';
+ if(s.timing)return timingMarkup(s);
  const now=Date.now(),end=s.at+s.window,p=plan(s.target,s.score),waiting=now<s.at;
  const level=s.score>=82?'Высокий балл':s.score>=66?'Средний балл':'Низкий балл';
- return `<div class="analysis-head"><div><h2>${vip?'VIP · крупные цели':'Интеллектуальный анализ Aviator'}</h2><p>${escapeText(s.pattern)} · ${s.estimated?'по последовательности':'по времени получения'}</p></div><span class="analysis-badge">${now>end?'Окно завершено':online&&fresh()?'Сигнал закреплён':'Сигнал сохранён · источник недоступен'}</span></div><div class="analysis-grid ${vip?'vip':''}"><div class="signal-cell"><div class="signal-label">Ориентировочная цель</div><div class="signal-value signal-target">${s.target.toFixed(2)}×</div></div><div class="signal-cell"><div class="signal-label">Уровень оценки</div><div class="signal-value">${level}</div><div class="signal-note">Дополнительная цель: ${p.insurance.toFixed(2)}×</div></div><div class="signal-cell"><div class="signal-label">Оценка правил</div><div class="signal-value blue">${s.score} / 100</div><div class="score-track"><span style="width:${s.score}%"></span></div></div><div class="signal-cell"><div class="signal-label">${s.estimated?'Начало наблюдения ≈':'Расчётное начало окна'}</div><div class="signal-value signal-time">${fmtTime(s.at)}</div><div class="signal-note">${waiting?'До окна: '+durationLabel(s.at-now):now<=end?'До конца: '+durationLabel(end-now):'Ожидается новый расчёт'}</div></div></div><p class="signal-note">Окно наблюдения${s.estimated?' ≈':''}: <b>${fmtTime(s.at)} — ${fmtTime(end)}</b> · ${zone()} · ${rounds.length} раундов в текущей модели.<br>${escapeText(s.basis)}${vip?'<br>Частота цели в исходной выборке: '+s.hitRate+'% ('+s.hits+' / '+s.sampleSize+'); это не точность прогноза.':''}</p>`;
+ return `<div class="analysis-head"><div><h2>${vip?'VIP · крупные цели':'Интеллектуальный анализ Aviator'}</h2><p>${escapeText(s.pattern)} · ${s.estimated?'по последовательности':'по времени получения'}</p></div><span class="analysis-badge">${now>end?'Окно завершено':online&&fresh()?'Сигнал закреплён':'Сигнал сохранён · источник недоступен'}</span></div><div class="analysis-grid ${vip?'vip':''}"><div class="signal-cell"><div class="signal-label">Ориентировочная цель</div><div class="signal-value signal-target">${s.target.toFixed(2)}×</div></div><div class="signal-cell"><div class="signal-label">Уровень оценки</div><div class="signal-value">${level}</div><div class="signal-note">Дополнительная цель: ${p.insurance.toFixed(2)}×</div></div><div class="signal-cell"><div class="signal-label">Оценка правил</div><div class="signal-value blue">${s.timing?(s.timing.medianErrorMs/60000).toFixed(1)+' мин':s.score+' / 100'}</div><div class="score-track"><span style="width:${s.score}%"></span></div></div><div class="signal-cell"><div class="signal-label">${s.estimated?'Начало наблюдения ≈':'Расчётное начало окна'}</div><div class="signal-value signal-time">${fmtTime(s.at)}</div><div class="signal-note">${waiting?'До окна: '+durationLabel(s.at-now):now<=end?'До конца: '+durationLabel(end-now):'Ожидается новый расчёт'}</div></div></div><p class="signal-note">Окно наблюдения${s.estimated?' ≈':''}: <b>${fmtTime(s.at)} — ${fmtTime(end)}</b> · ${zone()} · ${rounds.length} раундов в текущей модели.<br>${escapeText(s.basis)}${vip&&!s.timing?'<br>Частота цели в исходной выборке: '+s.hitRate+'% ('+s.hits+' / '+s.sampleSize+'); это не точность прогноза.':''}</p>`;
 }
 function saveJournal(){try{localStorage.setItem(JOURNAL_KEY,JSON.stringify(signalJournal.slice(0,300)))}catch(_){}}
 function restoreJournal(){
@@ -151,7 +110,7 @@ function restoreJournal(){
  for(const s of signalJournal){s.checked=s.ids.length;if(s.status==='pending'&&Date.now()<s.at+s.window){if(s.kind==='normal'&&!activeNormal)activeNormal=s.signal;if(s.kind==='vip'&&!activeVip)activeVip=s.signal;if(s.kind==='big'&&!activeBig)activeBig=s.signal}}
  saveJournal();
 }
-function recordSignal(kind,s){if(!finiteSignal(s))return;const id=kind+':'+s.generatedAt;if(signalJournal.some(x=>x.id===id))return;signalJournal.unshift({id,kind,signal:s,at:s.at,window:s.window,target:s.target,status:'pending',ids:[],checked:0,approximate:!!s.estimated,coverageGap:false,policy:'audit3'});signalJournal=signalJournal.slice(0,300);saveJournal()}
+function recordSignal(kind,s){if(!finiteSignal(s))return;const id=kind+':'+s.generatedAt;if(signalJournal.some(x=>x.id===id))return;signalJournal.unshift({id,kind,signal:s,createdAt:Date.now(),at:s.at,window:s.window,target:s.target,status:'pending',ids:[],checked:0,approximate:!!s.estimated,coverageGap:false,policy:'audit3'});signalJournal=signalJournal.slice(0,300);saveJournal()}
 function gap(reason){for(const s of signalJournal){if(s.status!=='pending')continue;s.coverageGap=true;s.coverageReason=reason}saveJournal()}
 function merge(items,arrivalIds=new Set()){
  const incoming=normalizeFeed(items),known=new Map(rounds.map(r=>[r.id,r])),accepted=[];
@@ -169,7 +128,7 @@ function processNew(items){
   if(s.status!=='pending')continue;const end=s.at+s.window;
   for(const r of items){
    const eventAt=r.timeIssue?r._observedAt:r.timestamp;
-   if(!eventAt||eventAt<s.at||eventAt>end||s.ids.includes(r.id))continue;
+   if(!eventAt||eventAt<=Number(s.createdAt??s.signal.generatedAt)||eventAt>Date.now()||eventAt<s.at||eventAt>end||s.ids.includes(r.id))continue;
    s.ids.push(r.id);s.checked++;s.approximate ||= r.estimated;
    if(r.coefficient>=s.target){s.actual=r.coefficient;s.actualAt=eventAt;s.status=s.approximate?'observed':'hit';s.finishedAt=Date.now();break}
   }
@@ -181,7 +140,7 @@ function evaluateJournal(now=Date.now()){
   if(s.status!=='pending')continue;const end=s.at+s.window;
   if(lastPollAt&&now-lastPollAt>COVERAGE_MS&&now>=s.at&&lastPollAt<end){s.coverageGap=true;s.coverageReason='Пропуск обновлений внутри окна'}
   if(now<=end+GRACE_MS||syncPromise&&now<end+30000)continue;
-  const covered=s.checked>0&&!s.approximate&&!s.coverageGap&&online&&fresh(now)&&!rounds[0].estimated&&rounds[0].timestamp>=end&&lastPollAt>=end+GRACE_MS&&now-lastPollAt<COVERAGE_MS;
+  const covered=coversWindow({start:s.at,end,createdAt:s.createdAt??s.signal.generatedAt},rounds,now)&&s.checked>0&&!s.approximate&&!s.coverageGap&&online&&fresh(now)&&!rounds[0].estimated&&rounds[0].timestamp>=end&&lastPollAt>=end+GRACE_MS&&now-lastPollAt<COVERAGE_MS;
   if(!covered&&online&&now<end+30000)continue;
   s.status=covered?'miss':'expired';s.finishedAt=now;if(!covered&&!s.coverageReason)s.coverageReason=s.approximate?'Время раундов приблизительное':'Нет полной проверки окна';
  }
@@ -192,12 +151,12 @@ function bigDiagnostics(){
  if(collectorStatus&&!collectorStatus.fresh)return emptyReason();if(!fresh())return 'Ожидаю свежий раунд: последние данные старше трёх минут.';
  if(rounds.length<20)return 'Недостаточно данных: '+rounds.length+' / 20 раундов.';
  const exact=exactRounds(),recent=(preciseModel()?exact:rounds).slice(0,80),c20=recent.filter(r=>r.coefficient>=20).length,c50=recent.filter(r=>r.coefficient>=50).length;
- const clock=preciseModel()?'Цикл ≥100× и Пуассон проверены по '+exact.length+' точным меткам; самостоятельному кандидату нужен балл ≥75.':'Цикл ≥100× и Пуассон отключены: среди последних 20 раундов есть время ≈. Кластер по коэффициентам доступен.';
+ const clock='Для целей ≥100× используется общий облачный расчёт интервалов с проверенной ошибкой времени. При нехватке проверок точное окно не назначается.';
  return 'Кластер за '+recent.length+' последних раундов: ≥20× — '+c20+' (нужно 6), ≥50× — '+c50+' (нужно 3). '+clock;
 }
 function renderExtras(){
  const now=Date.now(),s=activeBig;
- $('bigAlert').innerHTML=s?`<div class="big-title">🔥 Крупная цель ${s.target.toFixed(0)}× · ${s.estimated?'окно ≈':'время получения'}</div><div class="big-main">${fmtTime(s.at)} — ${fmtTime(s.at+s.window)}</div><div class="signal-note">${escapeText(s.basis)}<br>Оценка условий: ${s.score} / 100. Цель закреплена до конца окна.</div>`:`<div class="big-title">Крупные коэффициенты · наблюдение</div><div class="signal-note">${escapeText(bigDiagnostics())}</div>`;
+ $('bigAlert').innerHTML=s?`<div class="big-title">🔥 Крупная цель ${s.target.toFixed(0)}× · ${s.estimated?'окно ≈':'время получения'}</div><div class="big-main">${fmtTime(s.at)} — ${fmtTime(s.at+s.window)}</div><div class="signal-note">${escapeText(s.basis)}<br>Оценка условий: ${s.timing?(s.timing.medianErrorMs/60000).toFixed(1)+' мин':s.score+' / 100'}. Цель закреплена до конца окна.</div>`:`<div class="big-title">Крупные коэффициенты · наблюдение</div><div class="signal-note">${escapeText(bigDiagnostics())}</div>`;
  evaluateJournal();
  const names={normal:'Обычный анализ',vip:'VIP',big:'Крупная цель'},labels={pending:'Ожидание окна',hit:'Цель достигнута в окне',miss:'Цель не достигнута за проверенное окно',observed:'Цель наблюдалась · время ≈',expired:'Результат не проверен'};
  $('signalJournal').innerHTML=signalJournal.slice(0,50).map(x=>`<div class="journal-row"><b>${names[x.kind]} · ${x.target.toFixed(2)}×</b><span>${fmtTime(x.at)} — ${fmtTime(x.at+x.window)}</span><span>${x.status==='pending'&&now>=x.at?'Проверка окна':labels[x.status]}${Number.isFinite(x.actual)?' · '+x.actual.toFixed(2)+'×':''}${x.status==='expired'?' · '+escapeText(x.coverageReason||'Недостаточно данных'):''}</span></div>`).join('')||'<p class="signal-note">Здесь появятся результаты новых сигналов.</p>';
@@ -280,3 +239,11 @@ $('archiveMore').addEventListener('click',loadArchive);$('archiveShow').addEvent
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){checkForNewRound();renderSignals();connectLive()}});
 window.addEventListener('bee-cloud-connect',()=>refreshModel());document.addEventListener('visibilitychange',()=>{if(!document.hidden){gap('Страница была в фоне: непрерывность окна не подтверждена');refreshModel()}});restoreJournal();chooseMode('normal');render();refreshModel();connectLive();setInterval(()=>{if(!window.ClassicCloud.connected())checkForNewRound();else window.ClassicCloud.getStatus(true).then(status=>{collectorStatus={...(collectorStatus||{}),source_connected:status.source_connected,fresh:status.fresh,error:status.error};online=!!status.source_connected;lastPollAt=Date.now();if(!status.fresh)gap('Источник Supabase отключён');renderStatus();renderSignals()}).catch(()=>{online=false;if(collectorStatus)collectorStatus.fresh=false;gap('Проверка Supabase недоступна');renderStatus();renderSignals()})},POLL_MS);setInterval(refreshModel,300000);setInterval(updateAnalysis,8000);setInterval(renderSignals,1000);
 
+
+function timingMarkup(s){
+ const v=s.timing,end=s.at+s.window;
+ return `<div class="analysis-head"><div><h2>VIP · ≥${s.target.toFixed(0)}×</h2><p>Время по проверенной истории Aviator</p></div><span class="analysis-badge">Наблюдение</span></div><div class="analysis-grid vip"><div class="signal-cell"><div class="signal-label">Начало диапазона · Киев</div><div class="signal-value signal-time">${fmtTime(s.at)}</div></div><div class="signal-cell"><div class="signal-label">Конец диапазона · Киев</div><div class="signal-value signal-time">${fmtTime(end)}</div></div><div class="signal-cell"><div class="signal-label">Медианная ошибка времени</div><div class="signal-value blue">${(v.medianErrorMs/60000).toFixed(1)} мин</div></div><div class="signal-cell"><div class="signal-label">Прошлые события в диапазоне</div><div class="signal-value">${v.covered} / ${v.tested}</div><p class="signal-note">Не вероятность выигрыша</p></div></div><p class="signal-note">${escapeText(s.basis)}<br>Ширина диапазона сейчас: ${((end-s.at)/60000).toFixed(1)} мин. Дополнительная меньшая цель по прежнему правилу: ${plan(s.target,0).insurance.toFixed(2)}×; это отдельная эвристика.</p>`;
+}
+
+function timingReportReady(report,now){const checked=globalThis.Date.parse(report?.checked_at);return report?.fresh&&report.model_version==='cloud-v2-timing'&&Number.isFinite(checked)&&checked<=now+10000&&now-checked<90000}
+function registeredTiming(report,m,now){if(!m?.window)return null;const w=report.windows?.find(w=>w.id==='cloud:'+m.window.id&&w.status==='pending');return w&&w.end>now?{...m.window,id:w.id,start:w.start,end:w.end}:null}
