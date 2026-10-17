@@ -1,0 +1,1 @@
+@yogesharc/thinking-orbs 0.1.2 — Yogesh. MIT license (LICENSE). Source: https://github.com/yogesharc/thinking-orbs . Unmodified vanilla SVG engine from the official npm package. Download: https://registry.npmjs.org/@yogesharc/thinking-orbs/-/thinking-orbs-0.1.2.tgz .

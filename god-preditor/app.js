@@ -1,4 +1,7 @@
-import {coversWindow} from '../coverage.js?v=timing-v2-20261017';
+import {renderTimingInsight,renderNormalPrediction} from '../insight-view.js?v=history-cards-20261017';
+import {focusTarget,QUICK_TARGETS,FOCUS_KEY,registeredTiming as recordedTiming,reportReady,updateInsight} from '../timing-view-model.js?v=history-cards-20261017';
+import '../thinking-orb.js?v=history-cards-20261017';
+import {coversWindow} from '../coverage.js?v=history-cards-20261017';
 'use strict';
 const Date=window.AviatorClock.Date;
 const API=window.BOG_CLOUD.url+'/rest/v1/aviator_classic_history';
@@ -6,7 +9,8 @@ let collectorStatus=null;
 const ENGINE=window.GodPreditor,$=id=>document.getElementById(id);
 const LIMIT=100,MODEL_LIMIT=2000,POLL_MS=3000,FRESH_MS=180000,COVERAGE_MS=15000,GRACE_MS=15000;
 const JOURNAL_KEY='aviator_classic_rules_20261017',LEGACY_KEY='aviator_classic_no_legacy';
-let rounds=[],mode='normal',activeNormal=null,activeVip=null,activeBig=null,signalJournal=[];
+let selectedTarget=focusTarget(localStorage);
+let rounds=[],mode='vip',activeNormal=null,activeVip=null,activeBig=null,signalJournal=[];
 let online=false,lastPollAt=0,syncPromise=null,initialized=false,lastAnalysisAt=0,modelRefreshedAt=0;
 let liveKnownTotal=0,invalidRows=0,conflictingRows=0,liveSocket=null,liveReconnectTimer=null,liveReconnectDelay=5000;
 let archiveRows=[],archiveOffset=0,archiveBusy=false,archiveDone=false,archiveVisible=100;
@@ -60,8 +64,7 @@ function ordinaryPrediction(forceOrder=false){const data=rounds.filter(r=>coeffi
 function vipPrediction(){
  const report=window.ClassicCloud.report(),now=Date.now();
  if(!timingReportReady(report,now))return null;
- const recent=rounds.slice(0,80),n20=recent.filter(r=>r.coefficient>=20).length,n50=recent.filter(r=>r.coefficient>=50).length;
- let target=n50>=2&&n20>=5?50:n20>=3?20:10;
+ const target=selectedTarget;
  const m=report.large?.find(x=>x.target===target),w=registeredTiming(report,m,now);
  if(!w||w.end<=now)return null;
  return {target,score:0,at:w.start,window:w.end-w.start,generatedAt:w.center,pattern:'Крупная цель · проверка времени',basis:m.reason,estimated:false,timing:m.validation,timingWindowId:w.id};
@@ -94,12 +97,12 @@ function lockedPrediction(kind){
 function chooseMode(next){mode=next;const vip=next==='vip';$('normalTab').classList.toggle('active',!vip);$('vipTab').classList.toggle('active',vip);$('normalTab').setAttribute('aria-selected',String(!vip));$('vipTab').setAttribute('aria-selected',String(vip));$('normalSignal').hidden=vip;$('vipSignal').hidden=!vip}
 function durationLabel(ms){const s=Math.max(0,Math.ceil(ms/1000));return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
 function emptyReason(){if(collectorStatus&&!collectorStatus.fresh)return collectorStatus.source_connected?'Собираются новые раунды: '+collectorStatus.session_rounds+'/'+collectorStatus.warmup_required+'. История доступна.':'Наш сборщик ожидает подключения к игре.';if(!online)return 'Ожидаю успешного обновления базы.';if(!rounds.length)return 'В базе пока нет подходящих раундов.';if(!fresh())return 'Последний раунд устарел. Новый прогноз появится после обновления источника.';return 'Для расчёта нужны 20 раундов: получено '+rounds.length+'.'}
+
 function signalMarkup(s,vip){
- if(!s)return '<div class="signal-empty">'+escapeText(vip?'Для времени крупных целей нужны 20 полных интервалов и 8 последующих проверок. Состояние каждой цели показано ниже.':emptyReason())+'</div>';
- if(s.timing)return timingMarkup(s);
- const now=Date.now(),end=s.at+s.window,p=plan(s.target,s.score),waiting=now<s.at;
- const level=s.score>=82?'Высокий балл':s.score>=66?'Средний балл':'Низкий балл';
- return `<div class="analysis-head"><div><h2>${vip?'VIP · крупные цели':'Интеллектуальный анализ Aviator'}</h2><p>${escapeText(s.pattern)} · ${s.estimated?'по последовательности':'по времени получения'}</p></div><span class="analysis-badge">${now>end?'Окно завершено':online&&fresh()?'Сигнал закреплён':'Сигнал сохранён · источник недоступен'}</span></div><div class="analysis-grid ${vip?'vip':''}"><div class="signal-cell"><div class="signal-label">Ориентировочная цель</div><div class="signal-value signal-target">${s.target.toFixed(2)}×</div></div><div class="signal-cell"><div class="signal-label">Уровень оценки</div><div class="signal-value">${level}</div><div class="signal-note">Дополнительная цель: ${p.insurance.toFixed(2)}×</div></div><div class="signal-cell"><div class="signal-label">Оценка правил</div><div class="signal-value blue">${s.timing?(s.timing.medianErrorMs/60000).toFixed(1)+' мин':s.score+' / 100'}</div><div class="score-track"><span style="width:${s.score}%"></span></div></div><div class="signal-cell"><div class="signal-label">${s.estimated?'Начало наблюдения ≈':'Расчётное начало окна'}</div><div class="signal-value signal-time">${fmtTime(s.at)}</div><div class="signal-note">${waiting?'До окна: '+durationLabel(s.at-now):now<=end?'До конца: '+durationLabel(end-now):'Ожидается новый расчёт'}</div></div></div><p class="signal-note">Окно наблюдения${s.estimated?' ≈':''}: <b>${fmtTime(s.at)} — ${fmtTime(end)}</b> · ${zone()} · ${rounds.length} раундов в текущей модели.<br>${escapeText(s.basis)}${vip&&!s.timing?'<br>Частота цели в исходной выборке: '+s.hitRate+'% ('+s.hits+' / '+s.sampleSize+'); это не точность прогноза.':''}</p>`;
+ const report=window.ClassicCloud.report(),now=Date.now(),live=online&&fresh();
+ if(vip){const model=report?.large?.find(m=>m.target===selectedTarget)||{target:selectedTarget,reason:'Загружаем историю этой цели…'},window=registeredTiming(report,model,now);const big=report?.large?.find(m=>m.target>=Math.max(50,selectedTarget+1)&&registeredTiming(report,m,now));return renderTimingInsight({model,window,selectedTarget,now,sampleSize:rounds.length,live,warning:big?{model:big,window:registeredTiming(report,big,now)}:null})}
+ if(!s)return '<div class="signal-empty">'+escapeText(emptyReason())+'</div>';
+ return renderNormalPrediction({target:s.target,score:s.score,at:s.at,end:s.at+s.window,pattern:s.pattern,basis:s.basis,sampleSize:rounds.length,live,risk:plan(s.target,s.score).risk});
 }
 function saveJournal(){try{localStorage.setItem(JOURNAL_KEY,JSON.stringify(signalJournal.slice(0,300)))}catch(_){}}
 function restoreJournal(){
@@ -163,7 +166,7 @@ function renderExtras(){
  const hit=signalJournal.filter(x=>x.status==='hit').length,miss=signalJournal.filter(x=>x.status==='miss').length,n=hit+miss;
  $('signalStats').textContent='Проверено: '+n+' · попадания: '+hit+' · промахи: '+miss+' · '+(n?'доля попаданий '+Math.round(hit/n*100)+'%':'доля попаданий ещё не рассчитана')+' · время ≈: '+signalJournal.filter(x=>x.status==='observed').length+' · не проверено: '+signalJournal.filter(x=>x.status==='expired').length;
 }
-function renderSignals(){ $('normalSignal').innerHTML=signalMarkup(activeNormal,false);$('vipSignal').innerHTML=signalMarkup(activeVip,true);renderExtras();renderStatus() }
+function renderSignals(){updateInsight($('normalSignal'),signalMarkup(activeNormal,false));updateInsight($('vipSignal'),signalMarkup(activeVip,true));renderExtras();renderStatus()}
 function renderStatus(){if(collectorStatus){const ok=fresh();$('statusDot').className='dot '+(ok?'ok':'err');$('liveDot').className='dot '+(ok?'ok':'err');$('statusText').textContent='Supabase · '+collectorStatus.live_count+' раундов';$('liveLabel').textContent=ok?'Свежие данные':collectorStatus.source_connected?'Сбор '+collectorStatus.session_rounds+'/'+collectorStatus.warmup_required:'Источник отключён';return}const head=rounds[0],at=head?head._observedAt||(!head.timeIssue?head.timestamp:0):0,age=at?Math.max(0,Math.round((Date.now()-at)/1000)):null,ok=online&&fresh();$('statusDot').className='dot '+(ok?'ok':'err');$('liveDot').className='dot '+(ok?'ok':'err');$('statusText').textContent=(online?'База доступна':'Нет связи')+(age==null?head?.timeIssue?' · часы источника требуют проверки':'':' · '+(head._observedAt?'новый результат получен ':'раунд ')+age+' с назад');$('liveLabel').textContent=ok?'Свежие данные':online?'Ожидание нового результата':'Нет связи'}
 function render(){
  const sample=rounds.slice(0,LIMIT),nums=sample.map(coefficient),grid=$('grid');grid.replaceChildren();
@@ -223,7 +226,7 @@ function syncHistory(full=false){
    archiveRows=normalizeFeed([...rounds,...archiveRows]).rows.slice(0,10000);
    $('updated').textContent='Обновлено: '+fmtTime(lastPollAt);updateAnalysis();render();
   }catch(e){online=false;if(collectorStatus)collectorStatus={...collectorStatus,fresh:false};gap('История не обновилась: '+e.message);$('updated').textContent='Ошибка: '+e.message;renderStatus();renderSignals()}
-  finally{syncPromise=null}
+  finally{syncPromise=null;window.__aviatorReady=true;window.dispatchEvent(new Event('aviator-ready'))}
  })();return syncPromise;
 }
 const refreshModel=()=>syncHistory(true),checkForNewRound=()=>syncHistory(false);
@@ -237,13 +240,10 @@ function csvCell(s){let v=String(s);if(/^[=+@-]/.test(v))v="'"+v;return '"'+v.re
 $('archiveCsv').addEventListener('click',()=>{const csv='id,coefficient,timestamp,estimated,time_quality,observed_at\r\n'+archiveSelection().map(r=>[r.id,r.coefficient,r.timestamp?new Date(r.timestamp).toISOString():'',r.estimated,r.timeIssue||'source',r._observedAt?new Date(r._observedAt).toISOString():''].map(csvCell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='aviator-classic-rounds.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)});
 $('archiveMore').addEventListener('click',loadArchive);$('archiveShow').addEventListener('click',()=>{archiveVisible+=100;renderArchive()});$('archiveMin').addEventListener('change',()=>{archiveVisible=100;renderArchive()});$('archiveDate').addEventListener('change',()=>{archiveVisible=100;renderArchive()});$('normalTab').addEventListener('click',()=>chooseMode('normal'));$('vipTab').addEventListener('click',()=>chooseMode('vip'));
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){checkForNewRound();renderSignals();connectLive()}});
-window.addEventListener('bee-cloud-connect',()=>refreshModel());document.addEventListener('visibilitychange',()=>{if(!document.hidden){gap('Страница была в фоне: непрерывность окна не подтверждена');refreshModel()}});restoreJournal();chooseMode('normal');render();refreshModel();connectLive();setInterval(()=>{if(!window.ClassicCloud.connected())checkForNewRound();else window.ClassicCloud.getStatus(true).then(status=>{collectorStatus={...(collectorStatus||{}),source_connected:status.source_connected,fresh:status.fresh,error:status.error};online=!!status.source_connected;lastPollAt=Date.now();if(!status.fresh)gap('Источник Supabase отключён');renderStatus();renderSignals()}).catch(()=>{online=false;if(collectorStatus)collectorStatus.fresh=false;gap('Проверка Supabase недоступна');renderStatus();renderSignals()})},POLL_MS);setInterval(refreshModel,300000);setInterval(updateAnalysis,8000);setInterval(renderSignals,1000);
+window.addEventListener('bee-cloud-connect',()=>refreshModel());document.addEventListener('visibilitychange',()=>{if(!document.hidden){gap('Страница была в фоне: непрерывность окна не подтверждена');refreshModel()}});restoreJournal();chooseMode('vip');render();refreshModel();connectLive();setInterval(()=>{if(!window.ClassicCloud.connected())checkForNewRound();else window.ClassicCloud.getStatus(true).then(status=>{collectorStatus={...(collectorStatus||{}),source_connected:status.source_connected,fresh:status.fresh,error:status.error};online=!!status.source_connected;lastPollAt=Date.now();if(!status.fresh)gap('Источник Supabase отключён');renderStatus();renderSignals()}).catch(()=>{online=false;if(collectorStatus)collectorStatus.fresh=false;gap('Проверка Supabase недоступна');renderStatus();renderSignals()})},POLL_MS);setInterval(refreshModel,300000);setInterval(updateAnalysis,8000);setInterval(renderSignals,1000);
 
 
-function timingMarkup(s){
- const v=s.timing,end=s.at+s.window;
- return `<div class="analysis-head"><div><h2>VIP · ≥${s.target.toFixed(0)}×</h2><p>Время по проверенной истории Aviator</p></div><span class="analysis-badge">Наблюдение</span></div><div class="analysis-grid vip"><div class="signal-cell"><div class="signal-label">Начало диапазона · Киев</div><div class="signal-value signal-time">${fmtTime(s.at)}</div></div><div class="signal-cell"><div class="signal-label">Конец диапазона · Киев</div><div class="signal-value signal-time">${fmtTime(end)}</div></div><div class="signal-cell"><div class="signal-label">Медианная ошибка времени</div><div class="signal-value blue">${(v.medianErrorMs/60000).toFixed(1)} мин</div></div><div class="signal-cell"><div class="signal-label">Прошлые события в диапазоне</div><div class="signal-value">${v.covered} / ${v.tested}</div><p class="signal-note">Не вероятность выигрыша</p></div></div><p class="signal-note">${escapeText(s.basis)}<br>Ширина диапазона сейчас: ${((end-s.at)/60000).toFixed(1)} мин. Дополнительная меньшая цель по прежнему правилу: ${plan(s.target,0).insurance.toFixed(2)}×; это отдельная эвристика.</p>`;
-}
-
-function timingReportReady(report,now){const checked=globalThis.Date.parse(report?.checked_at);return report?.fresh&&report.model_version==='cloud-v2-timing'&&Number.isFinite(checked)&&checked<=now+10000&&now-checked<90000}
-function registeredTiming(report,m,now){if(!m?.window)return null;const w=report.windows?.find(w=>w.id==='cloud:'+m.window.id&&w.status==='pending');return w&&w.end>now?{...m.window,id:w.id,start:w.start,end:w.end}:null}
+function timingMarkup(s){return signalMarkup(s,true)}
+function timingReportReady(report,now){return reportReady(report,now)}
+function registeredTiming(report,m,now){return recordedTiming(report,m,now,online&&fresh(now))}
+document.addEventListener('click',e=>{const target=Number(e.target.closest('[data-focus-target]')?.dataset.focusTarget);if(!QUICK_TARGETS.includes(target))return;selectedTarget=target;try{localStorage.setItem(FOCUS_KEY,String(target))}catch{}activeVip=null;updateAnalysis(true);renderSignals()});

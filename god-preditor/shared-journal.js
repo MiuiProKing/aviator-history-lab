@@ -1,3 +1,5 @@
+import {renderTargetCards} from '../insight-view.js?v=history-cards-20261017';
+import {registeredTiming,sourceReady,updateInsight} from '../timing-view-model.js?v=history-cards-20261017';
 (()=>{
  const time=t=>Number.isFinite(Number(t))?new Date(Number(t)).toLocaleTimeString('ru-RU',{timeZone:'Europe/Kyiv',hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
  function draw(report){
@@ -15,16 +17,10 @@
  function drawTiming(report){
   let panel=document.getElementById('largeTimingPanel');
   if(!panel){panel=document.createElement('section');panel.id='largeTimingPanel';panel.className='section card';document.getElementById('cloudJournal')?.before(panel)}
-  panel.replaceChildren();const title=document.createElement('h2'),note=document.createElement('p'),grid=document.createElement('div');
-  title.textContent='Крупные цели · время и реальная ошибка';note.className='signal-note';note.textContent='Проверка идёт по событиям в порядке времени: сначала 20 прошлых интервалов, затем следующие события. Часы — Киев; метки означают получение сборщиком. Доля в диапазоне не является вероятностью выигрыша.';grid.className='analysis-grid';
-  panel.append(title,note,grid);
-  for(const m of report.large||[]){
-   const card=document.createElement('article');card.className='signal-cell';card.style.overflowWrap='anywhere';const h=document.createElement('h3'),range=document.createElement('p'),stats=document.createElement('p'),reason=document.createElement('p');
-   h.textContent='≥'+m.target+'×';range.className='signal-value signal-time';stats.className=reason.className='signal-note';
-   const v=m.validation,w=report.model_version==='cloud-v2-timing'&&report.fresh&&m.window?.end>window.AviatorClock.now()?m.window:null;
-   range.textContent=w?new Date(w.start).toLocaleString('ru-RU',{timeZone:'Europe/Kyiv'})+' — '+new Date(w.end).toLocaleString('ru-RU',{timeZone:'Europe/Kyiv'}):'Нет актуального диапазона';
-   stats.textContent='Событий: '+m.count+' · полных интервалов: '+(m.intervalCount??'—')+(v?.tested?' · проверок: '+v.tested+' · внутри диапазона: '+v.covered+'/'+v.tested+' · медианная ошибка: '+(v.medianErrorMs/60000).toFixed(1)+' мин · медианная ширина: '+(v.medianWidthMs/60000).toFixed(1)+' мин':' · недостаточно последующих проверок');reason.textContent=m.reason||'';card.append(h,range,stats,reason);grid.append(card);
-  }
+  const now=window.AviatorClock.now(),models=report.large||[],ready=sourceReady(window.ClassicCloud.status(),now);
+  updateInsight(panel,'<h2>Все крупные цели · история и время</h2><p class="signal-note">От 10× до 1000×. Для каждой цели — собственная выборка и проверка на более поздних событиях.</p>'+renderTargetCards(models,{windows:models.map(m=>({target:m.target,window:registeredTiming(report,m,now,ready)})),now,live:ready&&!!report.fresh}));
  }
+ setInterval(()=>{const report=window.ClassicCloud.report();if(report)drawTiming(report)},3000);
+ window.addEventListener('aviator-source-status',()=>{const report=window.ClassicCloud.report();if(report)drawTiming(report)});
  window.addEventListener('aviator-cloud-report',e=>draw(e.detail));const report=window.ClassicCloud.report();if(report)draw(report);
 })();
