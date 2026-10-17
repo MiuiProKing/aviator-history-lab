@@ -1,4 +1,4 @@
-import {CloudFeed} from './cloud.js';import {evaluate,stats,readiness} from './engine.js';import {LARGE_TARGETS,largeHistory} from './large-history.js';import {readJournal,mergeJournals,archiveResult} from './journal.js';
+import {CloudFeed} from './cloud.js?v=timing-v2-20261017';import {evaluate,stats,readiness} from './engine.js?v=timing-v2-20261017';import {LARGE_TARGETS,largeHistory} from './large-history.js?v=timing-v2-20261017';import {readJournal,mergeJournals,archiveResult} from './journal.js?v=timing-v2-20261017';
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const titles={overview:'Обзор',aviator:'Aviator',history:'Архив раундов',calculations:'Расчёты и результаты',tools:'О данных'};
 let route='overview',rows=[],source=null,error='',previous=null,calculation=null,calcError='Подключение к истории…',offset=0,historyRows=[],historyLoading=false,historyError='',historyDate='',historyAll=true,minCoef=10,historyHasMore=false,historyPage=0,historyRequest=0;

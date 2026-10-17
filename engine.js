@@ -1,4 +1,4 @@
-import {coversWindow} from './coverage.js';
+import {coversWindow} from './coverage.js?v=timing-v2-20261017';
 import {calculatePrediction} from './calculations.js';
 export function normalize(raw){
  const id=String(raw.id??'');const coefficient=Number(raw.coefficient);const timestamp=raw.round_timestamp==null?null:Date.parse(raw.round_timestamp);const order=Number(raw.feed_order??raw.source_seq);

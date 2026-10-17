@@ -1,4 +1,4 @@
-import {coversWindow} from '../coverage.js';
+import {coversWindow} from '../coverage.js?v=timing-v2-20261017';
 'use strict';
 const Date=window.AviatorClock.Date;
 const API=window.BOG_CLOUD.url+'/rest/v1/aviator_classic_history';

@@ -1,4 +1,4 @@
-import {CLOUD} from './config.js';import {normalize,mergeRows} from './engine.js';
+import {CLOUD} from './config.js';import {normalize,mergeRows} from './engine.js?v=timing-v2-20261017';
 const headers={apikey:CLOUD.anonKey,Authorization:'Bearer '+CLOUD.anonKey,Accept:'application/json'};
 export class CloudFeed{
  constructor(onUpdate,onError){this.rows=[];this.status=null;this.cursor=0;this.inflight=false;this.onUpdate=onUpdate;this.onError=onError;this.failures=0;this.lastStatus=0;this.nextAttempt=0;this.report=null;this.reportError="";this.lastReport=0}

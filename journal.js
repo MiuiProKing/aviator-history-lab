@@ -1,4 +1,4 @@
-import {coversWindow} from './coverage.js';
+import {coversWindow} from './coverage.js?v=timing-v2-20261017';
 export function validWindow(x){return !!x&&typeof x.id==='string'&&Number.isFinite(x.target)&&x.target>=1&&Number.isFinite(x.createdAt)&&Number.isFinite(x.start)&&Number.isFinite(x.end)&&x.end>x.start&&x.createdAt<=x.end&&['pending','unknown','hit','miss'].includes(x.status)}
 export function readJournal(raw){try{const list=JSON.parse(raw||'[]');return Array.isArray(list)?list.filter(validWindow):[]}catch{return []}}
 const rank={pending:0,unknown:1,miss:2,hit:3};
